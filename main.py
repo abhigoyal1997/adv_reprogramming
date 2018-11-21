@@ -163,7 +163,7 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
 
 
     if mode != 'train':
-        error_rate = torch.sum(y_true!=y_pred).item()/(y_true.shape[0]).item()
+        error_rate = torch.sum(y_true!=y_pred).item()/(y_true.shape[0])
         return loss/steps_per_epoch, {'error_rate': error_rate}
 
     return loss/steps_per_epoch
