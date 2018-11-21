@@ -26,12 +26,35 @@ parser.add_argument("--model-name", default=None,
                     help="Model Name")
 parser.add_argument("--log-interval", type=int,default=10,
                     help="Log Interval")
+parser.add_argument("--dataset", default="mnist",
+                    help="Dataset to be used")
+parser.add_argument("--model-type", default="resnet50",
+                    help="Model type to be used (resenet50 | inception_v3 | resnet101 | resnet152)")
+parser.add_argument("--lr", type=float, default=0.05,
+                    help="Learning Rate to be used")
+parser.add_argument("--wd", type=float, default=0.05,
+                    help= "weight decay values")
+parser.add_argument("--lr-decay", type=float, default=0.96,
+                    help = "decay rate of learning rate")
+parser.add_argument("--epochs", type=int, default=100,
+                    help="number of epochs to train the model")
+parser.add_argument("--decay-step", type=int, default=2,
+                    help="number of steps for decay")
+
 
 args = parser.parse_args()
 model_name = args.model_name
 log_interval = args.log_interval
-pimg_size = (224,224)
-img_size = (28,28)
+if args.model_type == "inception_v3":
+    pimg_size = (299,299)
+else:
+    pimg_size = (224,224)
+
+if args.dataset == "mnist":
+    img_size = (28,28)
+else:
+    img_size = (32,32)
+
 mask_size = pimg_size
 
 num_channels = 3
@@ -48,14 +71,25 @@ writer = SummaryWriter("{}{}".format(logs_dir, model_name))
 l_pad = int((pimg_size[0]-img_size[0]+1)/2)
 r_pad = int((pimg_size[0]-img_size[0])/2)
 
-transform = transforms.Compose([
-    transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
-    transforms.ToTensor(),
-    transforms.Normalize((0.1307,), (0.3081,)),
-    transforms.Lambda(lambda x: torch.cat([x]*3))
-])
+if args.dataset == "mnist":
+    transform = transforms.Compose([
+        transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,)),
+        transforms.Lambda(lambda x: torch.cat([x]*3))
+    ])
+else:
+    transform = transforms.Compose([
+        transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
 
-dataset = datasets.MNIST(data_dir, download = True,train=True, transform=transform)
+if args.dataset == "mnist":
+    dataset = datasets.MNIST(data_dir, download = True,train=True, transform=transform)
+else:
+    dataset = datasets.CIFAR10(data_dir, download = True,train=True, transform=transform)
+
 train_dataset, valid_dataset = random_split(dataset, [int(train_ratio*len(dataset)), len(dataset) - int(train_ratio*len(dataset))])
 
 train_loader = torch.utils.data.DataLoader(
@@ -68,13 +102,19 @@ valid_loader = torch.utils.data.DataLoader(
     batch_size=batch_size, shuffle=True
 )
 
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST(data_dir, train=False, transform=transform),
-    batch_size=test_batch_size, shuffle=False
-)
+if args.dataset == "mnist":
+    test_loader = torch.utils.data.DataLoader(
+        datasets.MNIST(data_dir, train=False, transform=transform),
+        batch_size=test_batch_size, shuffle=False
+    )
+else:
+    test_loader = torch.utils.data.DataLoader(
+        datasets.CIFAR10(data_dir, train=False, transform=transform),
+        batch_size=test_batch_size, shuffle=False
+    )
 
 device = torch.device('cuda')
-model = resnet50(pretrained=True).to(device)
+model = eval(args.model_type)(pretrained=True).to(device)
 model.eval()
 
 program = torch.rand(num_channels, *pimg_size, requires_grad=True,device=device)
@@ -85,8 +125,8 @@ r_pad = int((mask_size[0]-img_size[0])/2)
 mask = torch.zeros(num_channels, *img_size, device=device)
 mask = F.pad(mask, (l_pad, r_pad, l_pad, r_pad), value=1)
 
-optimizer = optim.Adam([program], lr=0.05, weight_decay=0.01)
-lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.96)
+optimizer = optim.Adam([program], lr=args.lr, weight_decay=args.wd)
+lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=args.lr_decay)
 
 loss_criterion = nn.CrossEntropyLoss()
 
@@ -169,7 +209,7 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
     return loss/steps_per_epoch
 
 
-num_epochs = 100
+num_epochs = args.epochs
 
 best_error_rate = 1
 
@@ -181,7 +221,7 @@ for epoch in range(num_epochs):
     valid_loss, val_metrics = run_epoch('valid', valid_loader, 10, epoch, loss_criterion=loss_criterion)
     error_rate = val_metrics['error_rate']
     if error_rate < best_error_rate:
-        torch.save({'program':program, 'mask':mask}, "{}{}.pt".format(model_dir, model_name))
+        torch.save({'program':program, 'mask':mask}, "{}{}.pt".format(models_dir, model_name))
         best_error_rate = error_rate
 
     _, test_metrics = run_epoch('test', test_loader, 10, epoch)
