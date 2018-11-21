@@ -108,11 +108,13 @@ else:
         batch_size=test_batch_size, shuffle=False
     )
 
-device = torch.device('cuda')
+device = torch.device('cpu')
 model = eval(args.model_type)(pretrained=True).to(device)
 model.eval()
+for param in model.parameters():
+    param.requires_grad = False
 
-program = torch.rand(num_channels, *pimg_size, requires_grad=True,device=device)
+program = torch.rand(num_channels, *pimg_size, requires_grad=True, device=device)
 
 l_pad = int((mask_size[0]-img_size[0]+1)/2)
 r_pad = int((mask_size[0]-img_size[0])/2)
