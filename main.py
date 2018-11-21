@@ -108,7 +108,7 @@ else:
         batch_size=test_batch_size, shuffle=False
     )
 
-device = torch.device('cpu')
+device = torch.device('cuda')
 model = eval(args.model_type)(pretrained=True).to(device)
 model.eval()
 for param in model.parameters():
