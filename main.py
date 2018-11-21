@@ -1,30 +1,25 @@
-
 # coding: utf-8
-
-# In[1]:
-
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from torch.autograd import Variable
 from torch.nn import functional as F
 from torchvision import datasets
 from torchvision import transforms
-from torchvision.models.inception import *
-from torchvision.models.resnet import *
+from torchvision.models.inception import inception_v3
+from torchvision.models.resnet import resnet50
 from torch.utils.data import random_split
 
 from tensorboardX import SummaryWriter
-from argparse import *
+from argparse import ArgumentParser
 from tqdm import tqdm
+from time import time
 
 
 parser = ArgumentParser()
-parser.add_argument("--model-name", default=None,
+parser.add_argument("-m","--model-name", default=None,
                     help="Model Name")
-parser.add_argument("--log-interval", type=int,default=10,
+parser.add_argument("-l","--log-interval", type=int,default=10,
                     help="Log Interval")
 
 args = parser.parse_args()
@@ -43,7 +38,7 @@ models_dir = 'models/'
 logs_dir = 'logs/'
 train_ratio = 0.8
 
-writer = SummaryWriter("{}{}".format(logs_dir, model_name))
+writer = SummaryWriter("{}{}-{}".format(logs_dir, model_name, time()))
 
 l_pad = int((pimg_size[0]-img_size[0]+1)/2)
 r_pad = int((pimg_size[0]-img_size[0])/2)
@@ -55,7 +50,7 @@ transform = transforms.Compose([
     transforms.Lambda(lambda x: torch.cat([x]*3))
 ])
 
-dataset = datasets.MNIST(data_dir, download = True,train=True, transform=transform)
+dataset = datasets.MNIST(data_dir, download=True, train=True, transform=transform)
 train_dataset, valid_dataset = random_split(dataset, [int(train_ratio*len(dataset)), len(dataset) - int(train_ratio*len(dataset))])
 
 train_loader = torch.utils.data.DataLoader(
@@ -90,7 +85,8 @@ lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.96)
 
 loss_criterion = nn.CrossEntropyLoss()
 
-def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, steps_per_epoch=None, loss_criterion=None, steps=None):
+
+def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, steps_per_epoch=None, loss_criterion=None):
     if mode == 'train':
         program.requires_grad = True
     else:
@@ -152,39 +148,34 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
             else:
                 y_pred = torch.cat([y_pred, torch.argmax(torch.softmax(logits, dim=1), dim=1)], dim=0)
 
-        if steps is not None:
-            if steps % log_interval == 0:
-                writer.add_scalar("{}_loss".format(mode), loss/(i+1), steps)
-                print("Loss at Step {} : {}".format(steps, loss/(i+1)))
-            steps += 1
+            error_rate = torch.sum(y_true!=y_pred).item()/(y_true.shape[0])
+
+        if i % log_interval == 0:
+            writer.add_scalar("{}_loss".format(mode), loss/(i+1), epoch*steps_per_epoch + i)
+            if mode != 'train':
+                writer.add_scalar("{}_error_rate".format(mode), error_rate, epoch*steps_per_epoch + i)
+            print("Loss at Step {} : {}".format(epoch*steps_per_epoch + i, loss/(i+1)))
 
         if i >= steps_per_epoch:
             break
 
-
     if mode != 'train':
-        error_rate = torch.sum(y_true!=y_pred).item()/(y_true.shape[0])
         return loss/steps_per_epoch, {'error_rate': error_rate}
-
     return loss/steps_per_epoch
 
 
 num_epochs = 100
-
 best_error_rate = 1
-
-global_steps = 0
 
 for epoch in range(num_epochs):
     lr_scheduler.step()
-    train_loss = run_epoch('train', train_loader, 10, optimizer, epoch, loss_criterion=loss_criterion, steps=global_steps)
-    valid_loss, val_metrics = run_epoch('valid', valid_loader, 10, epoch, loss_criterion=loss_criterion)
+    train_loss = run_epoch('train', train_loader, 10, optimizer, epoch, loss_criterion=loss_criterion)
+    valid_loss, val_metrics = run_epoch('valid', valid_loader, 10, epoch=epoch, loss_criterion=loss_criterion)
     error_rate = val_metrics['error_rate']
     if error_rate < best_error_rate:
-        torch.save({'program':program, 'mask':mask}, "{}{}.pt".format(model_dir, model_name))
+        torch.save({'program':program, 'mask':mask}, "{}{}.pt".format(models_dir, model_name))
         best_error_rate = error_rate
 
     _, test_metrics = run_epoch('test', test_loader, 10, epoch)
 
     print('Train loss : {}, Validation Loss : {}, Validation_ER : {}, Test Metrics : {}'.format(train_loss, valid_loss, error_rate, str(test_metrics)))
-
