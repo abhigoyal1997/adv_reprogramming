@@ -209,13 +209,13 @@ best_error_rate = 1
 
 for epoch in range(num_epochs):
     lr_scheduler.step()
-    train_loss = run_epoch('train', train_loader, 10, optimizer, epoch, loss_criterion=loss_criterion)
+    train_loss = run_epoch('train', train_loader, 10, optimizer, epoch=epoch, loss_criterion=loss_criterion)
     valid_loss, val_metrics = run_epoch('valid', valid_loader, 10, epoch=epoch, loss_criterion=loss_criterion)
     error_rate = val_metrics['error_rate']
     if error_rate < best_error_rate:
         torch.save({'program':program, 'mask':mask}, "{}{}.pt".format(models_dir, model_name))
         best_error_rate = error_rate
 
-    _, test_metrics = run_epoch('test', test_loader, 10, epoch)
+    _, test_metrics = run_epoch('test', test_loader, 10, epoch=epoch)
 
     print('Train loss : {}, Validation Loss : {}, Validation_ER : {}, Test Metrics : {}'.format(train_loss, valid_loss, error_rate, str(test_metrics)))
