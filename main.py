@@ -23,7 +23,7 @@ from tqdm import tqdm
 parser = ArgumentParser()
 parser.add_argument("--model-name", default=None,
                     help="Model Name")
-parser.add_argument("--log-interval", default=None,
+parser.add_argument("--log-interval", type=int,default=10,
                     help="Log Interval")
 
 # In[34]:
@@ -42,7 +42,7 @@ num_channels = 3
 # In[53]:
 
 
-batch_size = 100
+batch_size = 20
 test_batch_size = 100
 data_dir = 'data/'
 models_dir = 'models/'
@@ -57,7 +57,7 @@ r_pad = int((pimg_size[0]-img_size[0])/2)
 
 
 transform = transforms.Compose([
-    transforms.Pad(l_pad, l_pad, r_pad, r_pad),
+    transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
     transforms.ToTensor(),
     transforms.Normalize((0.1307,), (0.3081,)),
     transforms.Lambda(lambda x: torch.cat([x]*3))
@@ -84,21 +84,20 @@ test_loader = torch.utils.data.DataLoader(
 
 # In[ ]:
 
-
-model = inception_v3(pretrained=True)
-
-
-# In[49]:
+device = torch.device('cuda')
+model = inception_v3(pretrained=True).to(device)
+model.eval()
 
 
-device = torch.device('cpu')
 
-program = Variable(torch.rand(num_channels, *pimg_size), requires_grad=True)
+
+
+program = torch.rand(num_channels, *pimg_size, requires_grad=True,device=device)
 
 l_pad = int((mask_size[0]-img_size[0]+1)/2)
 r_pad = int((mask_size[0]-img_size[0])/2)
 
-mask = torch.zeros(num_channels, *img_size)
+mask = torch.zeros(num_channels, *img_size, device=device)
 mask = F.pad(mask, (l_pad, r_pad, l_pad, r_pad), value=1)
 
 optimizer = optim.Adam([program], lr=0.05, weight_decay=0.01)
@@ -168,12 +167,12 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
             else:
                 y_pred = torch.cat([y_pred, torch.argmax(torch.softmax(logits, dim=1), dim=1)], dim=0)
 
-        if step % log_interval == 0:
-            writer.add_scalar("{}_loss".format(mode), loss/(i+1), step)
-            print("Loss at Step {} : {}".format(step, loss/(i+1)))
+        if steps % log_interval == 0:
+            writer.add_scalar("{}_loss".format(mode), loss/(i+1), steps)
+            print("Loss at Step {} : {}".format(steps, loss/(i+1)))
 
-        if step is not None:
-            step += 1
+        if steps is not None:
+            steps += 1
 
         if i >= steps_per_epoch:
             break
