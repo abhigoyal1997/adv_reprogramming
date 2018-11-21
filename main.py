@@ -13,6 +13,7 @@ from torch.nn import functional as F
 from torchvision import datasets
 from torchvision import transforms
 from torchvision.models.inception import *
+from torchvision.models.resnet import *
 from torch.utils.data import random_split
 
 from tensorboardX import SummaryWriter
@@ -26,35 +27,26 @@ parser.add_argument("--model-name", default=None,
 parser.add_argument("--log-interval", type=int,default=10,
                     help="Log Interval")
 
-# In[34]:
-
-
 args = parser.parse_args()
 model_name = args.model_name
 log_interval = args.log_interval
-pimg_size = (299,299)
+pimg_size = (224,224)
 img_size = (28,28)
 mask_size = pimg_size
 
 num_channels = 3
 
-
-# In[53]:
-
-
-batch_size = 20
+batch_size = 100
 test_batch_size = 100
 data_dir = 'data/'
 models_dir = 'models/'
 logs_dir = 'logs/'
 train_ratio = 0.8
 
-
 writer = SummaryWriter("{}{}".format(logs_dir, model_name))
 
 l_pad = int((pimg_size[0]-img_size[0]+1)/2)
 r_pad = int((pimg_size[0]-img_size[0])/2)
-
 
 transform = transforms.Compose([
     transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
@@ -81,16 +73,9 @@ test_loader = torch.utils.data.DataLoader(
     batch_size=test_batch_size, shuffle=False
 )
 
-
-# In[ ]:
-
 device = torch.device('cuda')
-model = inception_v3(pretrained=True).to(device)
+model = resnet50(pretrained=True).to(device)
 model.eval()
-
-
-
-
 
 program = torch.rand(num_channels, *pimg_size, requires_grad=True,device=device)
 
@@ -104,12 +89,6 @@ optimizer = optim.Adam([program], lr=0.05, weight_decay=0.01)
 lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.96)
 
 loss_criterion = nn.CrossEntropyLoss()
-
-
-
-
-# In[45]:
-
 
 def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, steps_per_epoch=None, loss_criterion=None, steps=None):
     if mode == 'train':
@@ -143,8 +122,14 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
         if mode == 'train':
             optimizer.zero_grad()
 
-        x = x + F.tanh(program*mask)
-        logits = model(x)
+        if mode != 'train':
+            with torch.no_grad():
+                x = x + F.tanh(program*mask)
+                logits = model(x)
+        else:
+            x = x + F.tanh(program*mask)
+            logits = model(x)
+
         logits = logits[:,:num_classes]
 
         if loss_criterion is not None:
@@ -167,11 +152,10 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
             else:
                 y_pred = torch.cat([y_pred, torch.argmax(torch.softmax(logits, dim=1), dim=1)], dim=0)
 
-        if steps % log_interval == 0:
-            writer.add_scalar("{}_loss".format(mode), loss/(i+1), steps)
-            print("Loss at Step {} : {}".format(steps, loss/(i+1)))
-
         if steps is not None:
+            if steps % log_interval == 0:
+                writer.add_scalar("{}_loss".format(mode), loss/(i+1), steps)
+                print("Loss at Step {} : {}".format(steps, loss/(i+1)))
             steps += 1
 
         if i >= steps_per_epoch:
@@ -179,19 +163,20 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
 
 
     if mode != 'train':
-        error_rate = torch.sum(y_true!=y_pred).item()/(y_true.shape[0])
+        error_rate = torch.sum(y_true!=y_pred).item()/(y_true.shape[0]).item()
         return loss/steps_per_epoch, {'error_rate': error_rate}
 
     return loss/steps_per_epoch
 
 
-num_epochs = 1
+num_epochs = 100
 
 best_error_rate = 1
 
 global_steps = 0
 
 for epoch in range(num_epochs):
+    lr_scheduler.step()
     train_loss = run_epoch('train', train_loader, 10, optimizer, epoch, loss_criterion=loss_criterion, steps=global_steps)
     valid_loss, val_metrics = run_epoch('valid', valid_loader, 10, epoch, loss_criterion=loss_criterion)
     error_rate = val_metrics['error_rate']
