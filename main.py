@@ -27,7 +27,7 @@ parser.add_argument("--model-type", default="resnet50",
                     help="Model type to be used (resenet50 | inception_v3 | resnet101 | resnet152)")
 parser.add_argument("--lr", type=float, default=0.05,
                     help="Learning Rate to be used")
-parser.add_argument("--wd", type=float, default=0.05,
+parser.add_argument("--wd", type=float, default=0.00,
                     help="weight decay values")
 parser.add_argument("--lr-decay", type=float, default=0.96,
                     help="decay rate of learning rate")
@@ -72,13 +72,13 @@ if args.dataset == "mnist":
         transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
         transforms.ToTensor(),
         transforms.Normalize((0.1307,), (0.3081,)),
-        transforms.Lambda(lambda x: torch.cat([x]*3))
+        transforms.Lambda(lambda x: torch.cat([x]*3)),
     ])
 else:
     transform = transforms.Compose([
         transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
 if args.dataset == "mnist":
@@ -122,7 +122,8 @@ for param in model.parameters():
     count += 1
 print(count)
 
-program = torch.rand(num_channels, *pimg_size, requires_grad=True, device=device)
+program = torch.randn(num_channels, *pimg_size, device=device)
+program.requires_grad = True
 
 l_pad = int((mask_size[0]-img_size[0]+1)/2)
 r_pad = int((mask_size[0]-img_size[0])/2)
@@ -139,9 +140,8 @@ loss_criterion = nn.CrossEntropyLoss()
 
 def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, steps_per_epoch=None, loss_criterion=None):
     loss = 0.0
-    if mode != 'train':
-        y_true = None
-        y_pred = None
+    y_true = None
+    y_pred = None
 
     if steps_per_epoch is None:
         steps_per_epoch = len(data_loader)
@@ -170,7 +170,7 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
                 x = x + F.tanh(program*mask)
                 logits = model(x)
         else:
-            x = x + F.tanh(program*mask)
+            x = x + torch.tanh(program*mask)
             logits = model(x)
 
         logits = logits[:,:num_classes]
@@ -186,20 +186,17 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
 
             loss += batch_loss.item()
 
-        if mode != 'train':
-            if y_true is None:
-                y_true = y
-            else:
-                y_true = torch.cat([y_true, y], dim=0)
+        if y_true is None:
+            y_true = y
+        else:
+            y_true = torch.cat([y_true, y], dim=0)
 
-            if y_pred is None:
-                y_pred = torch.argmax(torch.softmax(logits, dim=1), dim=1)
-            else:
-                y_pred = torch.cat([y_pred, torch.argmax(torch.softmax(logits, dim=1), dim=1)], dim=0)
+        if y_pred is None:
+            y_pred = torch.argmax(torch.softmax(logits, dim=1), dim=1)
+        else:
+            y_pred = torch.cat([y_pred, torch.argmax(torch.softmax(logits, dim=1), dim=1)], dim=0)
 
-            error_rate = torch.sum(y_true!=y_pred).item()/(y_true.shape[0])
-
-        if i % log_interval == 0:
+        if i % log_interval == 0 and mode == 'train':
             writer.add_scalar("{}_loss".format(mode), loss/(i+1), epoch*steps_per_epoch + i)
             if mode == "train":
                 writer.add_scalar("gradient_abs", total_grad/(i+1), epoch*steps_per_epoch + i)
@@ -210,23 +207,24 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
         if i >= steps_per_epoch:
             break
 
+    accuracy = torch.sum(y_true==y_pred).item()/(y_true.shape[0])
     if mode != 'train':
-        return loss/steps_per_epoch, {'error_rate': error_rate}
-    return loss/steps_per_epoch
+        writer.add_scalar("{}_loss".format(mode), loss/steps_per_epoch, epoch*steps_per_epoch)
+    writer.add_scalar("{}_accuracy".format(mode), accuracy, epoch*steps_per_epoch)
+    return {'loss': loss/steps_per_epoch, 'accuracy': accuracy}
 
 
 num_epochs = args.epochs
-best_error_rate = 1
+best_accuracy = 0
 
 for epoch in range(num_epochs):
     lr_scheduler.step()
-    train_loss = run_epoch('train', train_loader, 10, optimizer, epoch=epoch, loss_criterion=loss_criterion)
-    valid_loss, val_metrics = run_epoch('valid', valid_loader, 10, epoch=epoch, loss_criterion=loss_criterion)
-    error_rate = val_metrics['error_rate']
-    if error_rate < best_error_rate:
+    train_metrics = run_epoch('train', train_loader, 10, optimizer, epoch=epoch, loss_criterion=loss_criterion)
+    valid_metrics = run_epoch('valid', valid_loader, 10, epoch=epoch, loss_criterion=loss_criterion)
+    if valid_metrics['accuracy'] > best_accuracy:
         torch.save({'program':program, 'mask':mask}, "{}{}.pt".format(models_dir, model_name))
-        best_error_rate = error_rate
+        best_accuracy = valid_metrics['accuracy']
 
-    _, test_metrics = run_epoch('test', test_loader, 10, epoch=epoch)
+    test_metrics = run_epoch('test', test_loader, 10, epoch=epoch, loss_criterion=loss_criterion)
 
-    print('Train loss : {}, Validation Loss : {}, Validation_ER : {}, Test Metrics : {}'.format(train_loss, valid_loss, error_rate, str(test_metrics)))
+    print('Train Metrics : {}, Validation Metrics : {}, Test Metrics : {}'.format(str(train_metrics), str(valid_metrics), str(test_metrics)))
