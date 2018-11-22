@@ -35,6 +35,7 @@ parser.add_argument("--epochs", type=int, default=100,
                     help="number of epochs to train the model")
 parser.add_argument("--decay-step", type=int, default=2,
                     help="number of steps for decay")
+parser.add_argument("--fresh", action="store_true", help="use fresh model instead of a pretrained one")
 
 
 args = parser.parse_args()
@@ -108,11 +109,18 @@ else:
         batch_size=test_batch_size, shuffle=False
     )
 
-device = torch.device('cuda')
-model = eval(args.model_type)(pretrained=True).to(device)
+device = torch.device('cpu')
+
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+
+model = eval(args.model_type)(pretrained=not(args.fresh)).to(device)
 model.eval()
+count = 0
 for param in model.parameters():
     param.requires_grad = False
+    count += 1
+print(count)
 
 program = torch.rand(num_channels, *pimg_size, requires_grad=True, device=device)
 
@@ -122,6 +130,7 @@ r_pad = int((mask_size[0]-img_size[0])/2)
 mask = torch.zeros(num_channels, *img_size, device=device)
 mask = F.pad(mask, (l_pad, r_pad, l_pad, r_pad), value=1)
 
+
 optimizer = optim.Adam([program], lr=args.lr, weight_decay=args.wd)
 lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=args.lr_decay)
 
@@ -129,11 +138,6 @@ loss_criterion = nn.CrossEntropyLoss()
 
 
 def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, steps_per_epoch=None, loss_criterion=None):
-    if mode == 'train':
-        program.requires_grad = True
-    else:
-        program.requires_grad = False
-
     loss = 0.0
     if mode != 'train':
         y_true = None
@@ -150,6 +154,7 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
         )
     else:
         ite = tqdm(enumerate(data_loader, 0))
+    total_grad = 0.0
 
     for i, data in ite:
         x = data[0].to(device)
@@ -174,7 +179,9 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
             batch_loss = loss_criterion(logits, y)
 
             if mode == 'train':
+
                 batch_loss.backward()
+                total_grad += program.grad.norm()/torch.numel(program.grad)
                 optimizer.step()
 
             loss += batch_loss.item()
@@ -194,6 +201,8 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
 
         if i % log_interval == 0:
             writer.add_scalar("{}_loss".format(mode), loss/(i+1), epoch*steps_per_epoch + i)
+            if mode == "train":
+                writer.add_scalar("gradient_abs", total_grad/(i+1), epoch*steps_per_epoch + i)
             if mode != 'train':
                 writer.add_scalar("{}_error_rate".format(mode), error_rate, epoch*steps_per_epoch + i)
             print("Loss at Step {} : {}".format(epoch*steps_per_epoch + i, loss/(i+1)))
