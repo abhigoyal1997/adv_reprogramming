@@ -70,15 +70,14 @@ if args.dataset == "mnist":
     transform = transforms.Compose([
         transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
         transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,)),
         transforms.Lambda(lambda x: torch.cat([x]*3)),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225])
     ])
 else:
     transform = transforms.Compose([
         transforms.Pad(padding=(l_pad, l_pad, r_pad, r_pad)),
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
 if args.dataset == "mnist":
@@ -112,10 +111,8 @@ else:
 device = torch.device('cuda')
 model = eval(args.model_type)(pretrained=True).to(device)
 model.eval()
-print(len([1 for param in model.parameters() if param.requires_grad]))
 for param in model.parameters():
     param.requires_grad = False
-print(len([1 for param in model.parameters() if param.requires_grad]))
 
 program = torch.randn(num_channels, *pimg_size, device=device)
 program.requires_grad = True
@@ -200,7 +197,8 @@ def run_epoch(mode, data_loader, num_classes=10, optimizer=None, epoch=None, ste
             break
 
     accuracy = torch.sum(y_true==y_pred).item()/(y_true.shape[0])
-    writer.add_scalar("{}_loss".format(mode), loss/steps_per_epoch, epoch*steps_per_epoch)
+    if mode != 'train':
+        writer.add_scalar("{}_loss".format(mode), loss/steps_per_epoch, epoch*steps_per_epoch)
     writer.add_scalar("{}_accuracy".format(mode), accuracy, epoch*steps_per_epoch)
     return {'loss': loss/steps_per_epoch, 'accuracy': accuracy}
 
